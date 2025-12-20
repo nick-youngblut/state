@@ -3,6 +3,53 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 
+def prepare_batched_batch(
+    ctrl_basal_list: List["np.ndarray"],
+    pert_vecs: List["torch.Tensor"],
+    batch_indices_list: Optional[List["torch.Tensor"]],
+    pert_names: List[str],
+    win_size: int,
+    device: "torch.device",
+) -> Dict[str, "torch.Tensor | List[str]"]:
+    """
+    Construct a batched model input for multiple perturbations.
+
+    The resulting tensors are flattened for compatibility with padded=True inference.
+    """
+    import numpy as np
+    import torch
+
+    num_perts = len(ctrl_basal_list)
+    if num_perts == 0:
+        raise ValueError("ctrl_basal_list must contain at least one perturbation window")
+    if len(pert_vecs) != num_perts or len(pert_names) != num_perts:
+        raise ValueError("ctrl_basal_list, pert_vecs, and pert_names must have the same length")
+
+    ctrl_stacked = np.concatenate(ctrl_basal_list, axis=0)
+    ctrl_tensor = torch.tensor(ctrl_stacked, dtype=torch.float32, device=device)
+
+    pert_repeated = [vec.float().unsqueeze(0).repeat(win_size, 1) for vec in pert_vecs]
+    pert_tensor = torch.cat(pert_repeated, dim=0).to(device)
+
+    pert_names_repeated: List[str] = []
+    for name in pert_names:
+        pert_names_repeated.extend([name] * win_size)
+
+    batch = {
+        "ctrl_cell_emb": ctrl_tensor,
+        "pert_emb": pert_tensor,
+        "pert_name": pert_names_repeated,
+    }
+
+    if batch_indices_list is not None:
+        if len(batch_indices_list) != num_perts:
+            raise ValueError("batch_indices_list must match the number of perturbations")
+        batch_tensor = torch.cat(batch_indices_list, dim=0).to(device)
+        batch["batch"] = batch_tensor
+
+    return batch
+
+
 def add_arguments_infer(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--checkpoint",
